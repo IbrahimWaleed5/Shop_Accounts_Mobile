@@ -326,10 +326,12 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                 );
 
                 final statusText = _statusText(item);
-                final canReverse = user.isManager &&
+                final canManageTransaction =
+                    user.isManager || user.isAccountant;
+                final canReverse = canManageTransaction &&
                     item.status == 'posted' &&
                     item.type != 'reversal';
-                final canShowEdit = user.isManager &&
+                final canShowEdit = canManageTransaction &&
                     item.type != 'reversal' &&
                     item.status != 'reversed';
 
