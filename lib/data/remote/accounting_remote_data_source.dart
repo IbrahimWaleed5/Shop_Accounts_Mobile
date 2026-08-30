@@ -9,10 +9,16 @@ class AccountingRemoteDataSource {
   );
 
   Future<List<AccountingTransactionModel>>
-      getTransactions() async {
+      getTransactions({
+    int? partyId,
+  }) async {
     final response =
         await apiClient.dio.get(
       '/transactions',
+      queryParameters: {
+        if (partyId != null)
+          'party_id': partyId,
+      },
     );
 
     final root =
@@ -43,6 +49,31 @@ class AccountingRemoteDataSource {
     final response =
         await apiClient.dio.post(
       '/transactions',
+      data: payload,
+    );
+
+    final root =
+        Map<String, dynamic>.from(
+      response.data as Map,
+    );
+
+    return AccountingTransactionModel
+        .fromJson(
+      Map<String, dynamic>.from(
+        root['data'] as Map,
+      ),
+    );
+  }
+
+
+  Future<AccountingTransactionModel>
+      correctTransaction({
+    required int transactionId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final response =
+        await apiClient.dio.post(
+      '/transactions/$transactionId/correct',
       data: payload,
     );
 

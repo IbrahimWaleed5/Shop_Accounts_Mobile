@@ -76,6 +76,12 @@ class TransactionDetailsScreen
     }
   }
 
+  String _dateTime(DateTime value) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(value.day)}/${two(value.month)}/${value.year}  '
+        '${two(value.hour)}:${two(value.minute)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final amount =
@@ -125,6 +131,10 @@ class TransactionDetailsScreen
                     ),
                   ),
                   const SizedBox(height: 8),
+                  Text(
+                    'التاريخ: ${_dateTime(transaction.occurredAt)}',
+                  ),
+                  const SizedBox(height: 6),
                   Text(
                     'الإجمالي: $amount ${transaction.currencySymbol}',
                   ),

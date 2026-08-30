@@ -2,10 +2,12 @@
     <uses-permission android:name="android.permission.INTERNET"/>
 
     <application
-        android:label="نظام حسابات الدكان"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        
+    android:label="نظام دكان ابو علي"
+    android:name="${applicationName}"
+    android:icon="@mipmap/ic_launcher"
+    android:usesCleartextTraffic="false"
+        >
         <activity
             android:name=".MainActivity"
             android:exported="true"

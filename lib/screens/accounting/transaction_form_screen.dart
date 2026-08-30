@@ -5,6 +5,7 @@ import '../../core/utils/money_utils.dart';
 import '../../models/category_model.dart';
 import '../../models/currency_model.dart';
 import '../../models/financial_account_model.dart';
+import '../../models/accounting_transaction_model.dart';
 import '../../models/party_model.dart';
 import '../../providers/accounting_provider.dart';
 import '../../providers/party_provider.dart';
@@ -13,10 +14,12 @@ import '../../providers/worker_provider.dart';
 
 class TransactionFormScreen extends StatefulWidget {
   final String initialType;
+  final AccountingTransactionModel? transaction;
 
   const TransactionFormScreen({
     super.key,
     this.initialType = 'expense',
+    this.transaction,
   });
 
   @override
@@ -47,11 +50,39 @@ class _TransactionFormScreenState
 
   DateTime _occurredAt = DateTime.now();
 
+  bool get _editing =>
+      widget.transaction != null;
+
   @override
   void initState() {
     super.initState();
 
-    _type = widget.initialType;
+    final editing = widget.transaction;
+
+    _type = editing?.type ?? widget.initialType;
+
+    if (editing != null) {
+      _currencyId = editing.currencyId;
+      _partyId = editing.partyId;
+      _workerId = editing.workerId;
+      _categoryId = editing.categoryId;
+      _financialAccountId =
+          editing.financialAccountId;
+      _targetFinancialAccountId =
+          editing.targetFinancialAccountId;
+      _occurredAt = editing.occurredAt;
+
+      _amountController.text =
+          MoneyUtils.formatMinor(
+        editing.amountMinor,
+        editing.currencyDecimalPlaces,
+      );
+
+      _descriptionController.text =
+          editing.description ?? '';
+      _notesController.text =
+          editing.notes ?? '';
+    }
 
     WidgetsBinding.instance
         .addPostFrameCallback((_) async {
@@ -342,9 +373,15 @@ class _TransactionFormScreenState
             AccountingProvider>();
 
     final success =
-        await provider.create(
-      payload,
-    );
+        _editing
+            ? await provider.edit(
+                transaction:
+                    widget.transaction!,
+                payload: payload,
+              )
+            : await provider.create(
+                payload,
+              );
 
     if (!mounted) {
       return;
@@ -357,13 +394,25 @@ class _TransactionFormScreenState
               provider.lastCreatedStatus ==
                   'syncing';
 
+      final wasLocal =
+          widget.transaction?.id != null &&
+          widget.transaction!.id < 0;
+
       ScaffoldMessenger.of(context)
           .showSnackBar(
         SnackBar(
           content: Text(
-            isPending
-                ? 'تم حفظ الحركة على الجهاز وستتم مزامنتها تلقائيًا عند عودة الاتصال.'
-                : 'تم ترحيل الحركة محاسبيًا.',
+            _editing
+                ? (
+                    wasLocal
+                        ? 'تم تعديل الحركة المحلية وستُزامن بالقيم الجديدة.'
+                        : 'تم تصحيح الحركة: أُنشئ قيد عكسي ثم الحركة المصححة.'
+                  )
+                : (
+                    isPending
+                        ? 'تم حفظ الحركة على الجهاز وستتم مزامنتها تلقائيًا عند عودة الاتصال.'
+                        : 'تم ترحيل الحركة محاسبيًا.'
+                  ),
           ),
         ),
       );
@@ -485,7 +534,9 @@ class _TransactionFormScreenState
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _titleForType(_type),
+          _editing
+              ? 'تعديل الحركة'
+              : _titleForType(_type),
         ),
       ),
       body: SingleChildScrollView(
@@ -987,14 +1038,16 @@ class _TransactionFormScreenState
                 height: 24,
               ),
 
-              const Card(
+              Card(
                 child: Padding(
                   padding:
                       EdgeInsets.all(
                     14,
                   ),
                   child: Text(
-                    'الحركة ستُرحّل كقيد مزدوج متوازن. لا يوجد حذف مباشر للحركات المالية.',
+                    _editing
+                        ? 'إذا كانت الحركة محلية قبل المزامنة ستتغير مباشرة. إذا كانت مرحلة سيعمل النظام قيدًا عكسيًا ثم ينشئ الحركة المصححة تلقائيًا.'
+                        : 'الحركة ستُرحّل كقيد مزدوج متوازن. لا يوجد حذف مباشر للحركات المالية.',
                   ),
                 ),
               ),
@@ -1016,8 +1069,10 @@ class _TransactionFormScreenState
                   ),
                   label: Text(
                     accounting.submitting
-                        ? 'جارٍ الترحيل...'
-                        : 'حفظ وترحيل',
+                        ? 'جارٍ الحفظ...'
+                        : (_editing
+                            ? 'حفظ التعديل'
+                            : 'حفظ وترحيل'),
                   ),
                 ),
               ),

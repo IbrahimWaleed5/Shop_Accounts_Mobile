@@ -14,6 +14,9 @@ class AccountingProvider
   List<AccountingTransactionModel>
       _transactions = [];
 
+  final Map<int, List<AccountingTransactionModel>>
+      _partyStatements = {};
+
   bool _loading = false;
   bool _submitting = false;
   bool _fromLocal = false;
@@ -25,6 +28,15 @@ class AccountingProvider
       get transactions =>
           List.unmodifiable(
             _transactions,
+          );
+
+  List<AccountingTransactionModel>
+      partyStatement(
+    int partyId,
+  ) =>
+          List.unmodifiable(
+            _partyStatements[partyId] ??
+                const <AccountingTransactionModel>[],
           );
 
   bool get loading =>
@@ -65,6 +77,31 @@ class AccountingProvider
     }
   }
 
+  Future<void> loadPartyStatement(
+    int partyId,
+  ) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final result =
+          await repository
+              .loadPartyTransactions(
+        partyId,
+      );
+
+      _partyStatements[partyId] =
+          result.transactions;
+      _fromLocal = result.fromLocal;
+    } on AccountingException catch (e) {
+      _error = e.message;
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
   Future<bool> create(
     Map<String, dynamic> payload,
   ) async {
@@ -84,6 +121,38 @@ class AccountingProvider
           transaction.status;
 
       await load();
+
+      return true;
+    } on AccountingException catch (e) {
+      _error = e.message;
+      return false;
+    } finally {
+      _submitting = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> edit({
+    required AccountingTransactionModel transaction,
+    required Map<String, dynamic> payload,
+  }) async {
+    _submitting = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      await repository.editTransaction(
+        transaction: transaction,
+        payload: payload,
+      );
+
+      await load();
+
+      if (transaction.partyId != null) {
+        await loadPartyStatement(
+          transaction.partyId!,
+        );
+      }
 
       return true;
     } on AccountingException catch (e) {

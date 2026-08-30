@@ -69,6 +69,66 @@ class AccountingRepository {
     }
   }
 
+  Future<AccountingLoadResult>
+      loadPartyTransactions(
+    int partyId,
+  ) async {
+    try {
+      final remoteData =
+          await remote.getTransactions(
+        partyId: partyId,
+      );
+
+      await database.upsertTransactions(
+        remoteData,
+      );
+
+      final pending =
+          (await database
+                  .readPendingTransactions())
+              .where(
+                (item) =>
+                    item.partyId == partyId,
+              )
+              .toList();
+
+      final combined = [
+        ...pending,
+        ...remoteData,
+      ]..sort(
+          (a, b) =>
+              b.occurredAt.compareTo(
+            a.occurredAt,
+          ),
+        );
+
+      return AccountingLoadResult(
+        transactions: combined,
+        fromLocal: false,
+      );
+    } on DioException catch (e) {
+      if (!_networkFailure(e)) {
+        throw AccountingException(
+          _message(e),
+        );
+      }
+
+      final local =
+          (await database
+                  .readAllTransactions())
+              .where(
+                (item) =>
+                    item.partyId == partyId,
+              )
+              .toList();
+
+      return AccountingLoadResult(
+        transactions: local,
+        fromLocal: true,
+      );
+    }
+  }
+
   Future<AccountingTransactionModel>
       createTransaction(
     Map<String, dynamic> payload,
@@ -162,6 +222,75 @@ class AccountingRepository {
 
       throw AccountingException(
         _message(e),
+      );
+    }
+  }
+
+  Future<AccountingTransactionModel>
+      editTransaction({
+    required AccountingTransactionModel transaction,
+    required Map<String, dynamic> payload,
+  }) async {
+    final localOnly =
+        transaction.id < 0 ||
+        transaction.status == 'pending_sync' ||
+        transaction.status == 'failed';
+
+    if (localOnly) {
+      final updated =
+          await database
+              .updatePendingTransactionPayload(
+        operationUuid: transaction.uuid,
+        payload: payload,
+      );
+
+      if (!updated) {
+        throw const AccountingException(
+          'تعذر تعديل الحركة المحلية. إذا كانت المزامنة بدأت، انتظر انتهاءها ثم حاول مجددًا.',
+        );
+      }
+
+      final pending =
+          await database
+              .pendingTransactionByUuid(
+        transaction.uuid,
+      );
+
+      if (pending == null) {
+        throw const AccountingException(
+          'تعذر قراءة الحركة بعد التعديل.',
+        );
+      }
+
+      return pending;
+    }
+
+    if (transaction.status != 'posted') {
+      throw const AccountingException(
+        'هذه الحركة لا يمكن تعديلها في حالتها الحالية.',
+      );
+    }
+
+    try {
+      final corrected =
+          await remote.correctTransaction(
+        transactionId: transaction.id,
+        payload: payload,
+      );
+
+      final remoteData =
+          await remote.getTransactions();
+
+      await database.upsertTransactions(
+        remoteData,
+      );
+
+      return corrected;
+    } on DioException catch (e) {
+      throw AccountingException(
+        _networkFailure(e)
+            ? 'تصحيح الحركة المرحلة يحتاج اتصالًا بالخادم.'
+            : _message(e),
       );
     }
   }

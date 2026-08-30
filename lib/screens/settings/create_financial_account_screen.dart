@@ -5,33 +5,28 @@ import '../../core/utils/money_utils.dart';
 import '../../models/currency_model.dart';
 import '../../providers/reference_data_provider.dart';
 
-class CreateFinancialAccountScreen
-    extends StatefulWidget {
+class CreateFinancialAccountScreen extends StatefulWidget {
   const CreateFinancialAccountScreen({
     super.key,
   });
 
   @override
-  State<CreateFinancialAccountScreen>
-      createState() =>
-          _CreateFinancialAccountScreenState();
+  State<CreateFinancialAccountScreen> createState() =>
+      _CreateFinancialAccountScreenState();
 }
 
 class _CreateFinancialAccountScreenState
     extends State<CreateFinancialAccountScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  final _nameController =
-      TextEditingController();
+  final _nameController = TextEditingController();
 
   final _openingBalanceController =
       TextEditingController(text: '0');
 
-  final _notesController =
-      TextEditingController();
+  final _notesController = TextEditingController();
 
   String _type = 'cash';
-  int? _currencyId;
 
   @override
   void dispose() {
@@ -41,12 +36,11 @@ class _CreateFinancialAccountScreenState
     super.dispose();
   }
 
-  CurrencyModel? _selectedCurrency(
+  CurrencyModel? _ilsCurrency(
     ReferenceDataProvider provider,
   ) {
-    for (final currency
-        in provider.activeCurrencies) {
-      if (currency.id == _currencyId) {
+    for (final currency in provider.activeCurrencies) {
+      if (currency.code.trim().toUpperCase() == 'ILS') {
         return currency;
       }
     }
@@ -62,10 +56,16 @@ class _CreateFinancialAccountScreenState
     final provider =
         context.read<ReferenceDataProvider>();
 
-    final currency =
-        _selectedCurrency(provider);
+    final currency = _ilsCurrency(provider);
 
     if (currency == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'عملة الشيكل ILS غير محمّلة. حدّث البيانات ثم حاول مرة أخرى.',
+          ),
+        ),
+      );
       return;
     }
 
@@ -78,8 +78,7 @@ class _CreateFinancialAccountScreenState
         currency.decimalPlaces,
       );
     } on FormatException catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(e.message),
         ),
@@ -89,12 +88,12 @@ class _CreateFinancialAccountScreenState
 
     final success =
         await provider.createFinancialAccount(
-      name: _nameController.text,
+      name: _nameController.text.trim(),
       type: _type,
       currencyId: currency.id,
       openingBalanceMinor:
           openingBalanceMinor,
-      notes: _notesController.text,
+      notes: _notesController.text.trim(),
     );
 
     if (!mounted) {
@@ -102,11 +101,10 @@ class _CreateFinancialAccountScreenState
     }
 
     if (success) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(
+      ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'تم إنشاء الحساب المالي.',
+            'تم إنشاء الحساب المالي بالشيكل.',
           ),
         ),
       );
@@ -115,8 +113,7 @@ class _CreateFinancialAccountScreenState
       return;
     }
 
-    ScaffoldMessenger.of(context)
-        .showSnackBar(
+    ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           provider.error ??
@@ -131,16 +128,7 @@ class _CreateFinancialAccountScreenState
     final provider =
         context.watch<ReferenceDataProvider>();
 
-    final currencies =
-        provider.activeCurrencies;
-
-    if (_currencyId == null &&
-        currencies.isNotEmpty) {
-      _currencyId = currencies.first.id;
-    }
-
-    final selected =
-        _selectedCurrency(provider);
+    final currency = _ilsCurrency(provider);
 
     return Scaffold(
       appBar: AppBar(
@@ -149,8 +137,7 @@ class _CreateFinancialAccountScreenState
         ),
       ),
       body: SingleChildScrollView(
-        padding:
-            const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(20),
         child: Form(
           key: _formKey,
           child: Column(
@@ -158,7 +145,7 @@ class _CreateFinancialAccountScreenState
                 CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'مثل: Cash، بنك فلسطين، Jawwal Pay أو أي محفظة أخرى.',
+                'أنشئ صندوقًا أو حساب بنك أو محفظة. جميع الحسابات تستخدم الشيكل فقط.',
               ),
 
               const SizedBox(height: 20),
@@ -167,14 +154,12 @@ class _CreateFinancialAccountScreenState
                 controller: _nameController,
                 decoration:
                     const InputDecoration(
-                  labelText:
-                      'اسم الحساب',
+                  labelText: 'اسم الحساب',
                   prefixIcon: Icon(
                     Icons
                         .account_balance_wallet_outlined,
                   ),
-                  border:
-                      OutlineInputBorder(),
+                  border: OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null ||
@@ -192,10 +177,8 @@ class _CreateFinancialAccountScreenState
                 initialValue: _type,
                 decoration:
                     const InputDecoration(
-                  labelText:
-                      'نوع الحساب',
-                  border:
-                      OutlineInputBorder(),
+                  labelText: 'نوع الحساب',
+                  border: OutlineInputBorder(),
                 ),
                 items: const [
                   DropdownMenuItem(
@@ -208,8 +191,9 @@ class _CreateFinancialAccountScreenState
                   ),
                   DropdownMenuItem(
                     value: 'wallet',
-                    child:
-                        Text('محفظة إلكترونية'),
+                    child: Text(
+                      'محفظة إلكترونية',
+                    ),
                   ),
                   DropdownMenuItem(
                     value: 'other',
@@ -229,38 +213,54 @@ class _CreateFinancialAccountScreenState
 
               const SizedBox(height: 16),
 
-              DropdownButtonFormField<int>(
-                initialValue: _currencyId,
+              InputDecorator(
                 decoration:
                     const InputDecoration(
                   labelText: 'العملة',
-                  border:
-                      OutlineInputBorder(),
+                  prefixIcon: Icon(
+                    Icons.payments_outlined,
+                  ),
+                  border: OutlineInputBorder(),
                 ),
-                items: currencies
-                    .map(
-                      (currency) =>
-                          DropdownMenuItem<int>(
-                        value: currency.id,
-                        child: Text(
-                          '${currency.code} - ${currency.nameAr}',
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'شيكل (ILS)',
+                        style: TextStyle(
+                          fontWeight:
+                              FontWeight.w600,
                         ),
                       ),
-                    )
-                    .toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _currencyId = value;
-                  });
-                },
-                validator: (value) {
-                  if (value == null) {
-                    return 'اختر العملة';
-                  }
-
-                  return null;
-                },
+                    ),
+                    Text(
+                      currency?.symbol
+                                  .trim()
+                                  .isNotEmpty ==
+                              true
+                          ? currency!.symbol
+                          : '₪',
+                      style:
+                          const TextStyle(
+                        fontSize: 18,
+                        fontWeight:
+                            FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
+
+              if (currency == null) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'جارٍ انتظار تحميل تعريف الشيكل من السيرفر. بعد نشر إصلاح الـ API أغلق التطبيق وافتحه من جديد.',
+                  style: TextStyle(
+                    color: Colors.redAccent,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 16),
 
@@ -268,17 +268,18 @@ class _CreateFinancialAccountScreenState
                 controller:
                     _openingBalanceController,
                 keyboardType:
-                    const TextInputType.numberWithOptions(
+                    const TextInputType
+                        .numberWithOptions(
                   decimal: true,
                   signed: true,
                 ),
-                decoration: InputDecoration(
+                decoration:
+                    const InputDecoration(
                   labelText:
                       'الرصيد الافتتاحي',
-                  suffixText:
-                      selected?.symbol,
+                  suffixText: '₪',
                   border:
-                      const OutlineInputBorder(),
+                      OutlineInputBorder(),
                 ),
                 validator: (value) {
                   if (value == null ||
@@ -286,14 +287,16 @@ class _CreateFinancialAccountScreenState
                     return 'أدخل الرصيد الافتتاحي';
                   }
 
-                  if (selected == null) {
-                    return 'اختر العملة';
+                  final ils = currency;
+
+                  if (ils == null) {
+                    return 'تعريف الشيكل غير محمّل';
                   }
 
                   try {
                     MoneyUtils.parseToMinor(
                       value,
-                      selected.decimalPlaces,
+                      ils.decimalPlaces,
                     );
                   } on FormatException catch (e) {
                     return e.message;
@@ -323,12 +326,12 @@ class _CreateFinancialAccountScreenState
                 height: 54,
                 child: FilledButton.icon(
                   onPressed:
-                      provider.isSubmitting
+                      provider.isSubmitting ||
+                              currency == null
                           ? null
                           : _save,
-                  icon: const Icon(
-                    Icons.add_card,
-                  ),
+                  icon:
+                      const Icon(Icons.add_card),
                   label: Text(
                     provider.isSubmitting
                         ? 'جارٍ الحفظ...'

@@ -1712,6 +1712,66 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  Future<bool> updatePendingTransactionPayload({
+    required String operationUuid,
+    required Map<String, dynamic> payload,
+  }) async {
+    final query = select(localSyncOperations)
+      ..where(
+        (table) =>
+            table.operationUuid.equals(
+          operationUuid,
+        ),
+      )
+      ..limit(1);
+
+    final row = await query.getSingleOrNull();
+
+    if (row == null ||
+        row.operationType !=
+            'accounting_transaction' ||
+        row.status == 'syncing') {
+      return false;
+    }
+
+    final prepared =
+        Map<String, dynamic>.from(payload);
+
+    prepared['uuid'] = operationUuid;
+
+    final oldPayload =
+        Map<String, dynamic>.from(
+      jsonDecode(row.payloadJson) as Map,
+    );
+
+    prepared['client_created_at'] ??=
+        oldPayload['client_created_at'] ??
+            row.createdAt.toIso8601String();
+
+    await (update(localSyncOperations)
+          ..where(
+            (table) =>
+                table.operationUuid.equals(
+              operationUuid,
+            ),
+          ))
+        .write(
+      LocalSyncOperationsCompanion(
+        payloadJson:
+            Value(jsonEncode(prepared)),
+        status:
+            const Value('pending_sync'),
+        attempts: const Value(0),
+        lastError:
+            const Value<String?>(null),
+        updatedAt:
+            Value(DateTime.now()),
+      ),
+    );
+
+    return true;
+  }
+
   Future<void> removeSyncOperation(
     String operationUuid,
   ) async {

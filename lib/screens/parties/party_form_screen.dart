@@ -85,7 +85,13 @@ class _PartyFormScreenState
         context
             .read<
                 ReferenceDataProvider>()
-            .activeCurrencies;
+            .activeCurrencies
+            .where(
+              (currency) =>
+                  currency.code.trim().toUpperCase() ==
+                  'ILS',
+            )
+            .toList();
 
     if (currencies.isEmpty) {
       return;
@@ -271,7 +277,13 @@ class _PartyFormScreenState
 
     try {
       balances = _buildBalances(
-        reference.activeCurrencies,
+        reference.activeCurrencies
+            .where(
+              (currency) =>
+                  currency.code.trim().toUpperCase() ==
+                  'ILS',
+            )
+            .toList(),
       );
     } on FormatException catch (e) {
       ScaffoldMessenger.of(context)
@@ -324,8 +336,8 @@ class _PartyFormScreenState
         SnackBar(
           content: Text(
             _editing
-                ? 'تم تحديث الحساب.'
-                : 'تم إنشاء الحساب.',
+                ? 'تم تحديث البيانات.'
+                : 'تم الحفظ بنجاح.',
           ),
         ),
       );
@@ -340,7 +352,7 @@ class _PartyFormScreenState
       SnackBar(
         content: Text(
           provider.error ??
-              'تعذر حفظ الحساب.',
+              'تعذر حفظ البيانات.',
         ),
       ),
     );
@@ -356,23 +368,23 @@ class _PartyFormScreenState
         context.watch<PartyProvider>();
 
     final currencies =
-        reference.activeCurrencies;
+        reference.activeCurrencies
+            .where(
+              (currency) =>
+                  currency.code.trim().toUpperCase() ==
+                  'ILS',
+            )
+            .toList();
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
           _editing
-              ? 'تعديل الحساب'
-              : 'حساب جديد',
+              ? 'تعديل العميل / المورد'
+              : (_type == 'supplier' ? 'إضافة مورد' : 'إضافة عميل'),
         ),
       ),
-      body: currencies.isEmpty
-          ? const Center(
-              child: Text(
-                'لا توجد عملات متاحة. حمّل الإعدادات المحاسبية أولًا.',
-              ),
-            )
-          : SingleChildScrollView(
+      body: SingleChildScrollView(
               padding:
                   const EdgeInsets.all(20),
               child: Form(
@@ -388,7 +400,7 @@ class _PartyFormScreenState
                       decoration:
                           const InputDecoration(
                         labelText:
-                            'نوع الحساب',
+                            'نوع السجل',
                         border:
                             OutlineInputBorder(),
                       ),
@@ -396,13 +408,13 @@ class _PartyFormScreenState
                         DropdownMenuItem(
                           value: 'customer',
                           child: Text(
-                            'عميل مدين للمحل',
+                            'عميل',
                           ),
                         ),
                         DropdownMenuItem(
                           value: 'supplier',
                           child: Text(
-                            'مورد المحل مدين له',
+                            'مورد',
                           ),
                         ),
                         DropdownMenuItem(
@@ -576,7 +588,7 @@ class _PartyFormScreenState
                               ? 'جارٍ الحفظ...'
                               : _editing
                                   ? 'حفظ التعديلات'
-                                  : 'إنشاء الحساب',
+                                  : (_type == 'supplier' ? 'حفظ المورد' : 'حفظ العميل'),
                         ),
                       ),
                     ),
@@ -648,7 +660,7 @@ class _BalanceSection
                   decoration:
                       InputDecoration(
                     labelText:
-                        currency.code,
+                        'شيكل (ILS)',
                     suffixText:
                         currency.symbol,
                     hintText: '0',
