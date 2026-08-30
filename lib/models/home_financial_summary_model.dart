@@ -24,6 +24,10 @@ class HomeFinancialSummaryModel {
   final int workerAdvancesMinor;
   final int workerAdvanceRecoveryMinor;
 
+  final int customerDebtTotalMinor;
+  final int supplierDebtToShopMinor;
+  final int supplierDebtOnShopMinor;
+
   const HomeFinancialSummaryModel({
     required this.currencyId,
     required this.currencyCode,
@@ -44,6 +48,9 @@ class HomeFinancialSummaryModel {
     required this.workerSalaryPaymentsMinor,
     required this.workerAdvancesMinor,
     required this.workerAdvanceRecoveryMinor,
+    this.customerDebtTotalMinor = 0,
+    this.supplierDebtToShopMinor = 0,
+    this.supplierDebtOnShopMinor = 0,
   });
 
   factory HomeFinancialSummaryModel.fromJson(
@@ -91,6 +98,12 @@ class HomeFinancialSummaryModel {
           value('worker_advances_minor'),
       workerAdvanceRecoveryMinor:
           value('worker_advance_recovery_minor'),
+      customerDebtTotalMinor:
+          value('customer_debt_total_minor'),
+      supplierDebtToShopMinor:
+          value('supplier_debt_to_shop_minor'),
+      supplierDebtOnShopMinor:
+          value('supplier_debt_on_shop_minor'),
     );
   }
 
@@ -109,6 +122,9 @@ class HomeFinancialSummaryModel {
     int? workerSalaryPaymentsMinor,
     int? workerAdvancesMinor,
     int? workerAdvanceRecoveryMinor,
+    int? customerDebtTotalMinor,
+    int? supplierDebtToShopMinor,
+    int? supplierDebtOnShopMinor,
   }) {
     return HomeFinancialSummaryModel(
       currencyId: currencyId,
@@ -148,6 +164,15 @@ class HomeFinancialSummaryModel {
       workerAdvanceRecoveryMinor:
           workerAdvanceRecoveryMinor ??
           this.workerAdvanceRecoveryMinor,
+      customerDebtTotalMinor:
+          customerDebtTotalMinor ??
+          this.customerDebtTotalMinor,
+      supplierDebtToShopMinor:
+          supplierDebtToShopMinor ??
+          this.supplierDebtToShopMinor,
+      supplierDebtOnShopMinor:
+          supplierDebtOnShopMinor ??
+          this.supplierDebtOnShopMinor,
     );
   }
 }

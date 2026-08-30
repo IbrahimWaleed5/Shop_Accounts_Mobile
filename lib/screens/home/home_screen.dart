@@ -686,6 +686,78 @@ class _HomeScreenState
                         CrossAxisAlignment
                             .stretch,
                     children: [
+                      const Row(
+                        children: [
+                          Icon(
+                            Icons.account_balance_outlined,
+                            color: _primary,
+                          ),
+                          SizedBox(
+                            width: 8,
+                          ),
+                          Text(
+                            'ملخص الديون',
+                            style: TextStyle(
+                              color: _onBackground,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(
+                        height: 14,
+                      ),
+
+                      _DetailRow(
+                        title:
+                            'إجمالي الديون على العملاء',
+                        value:
+                            _money(
+                          summary
+                              .customerDebtTotalMinor,
+                          summary,
+                        ),
+                      ),
+
+                      _DetailRow(
+                        title:
+                            'مستحقات المحل عند الموردين',
+                        value:
+                            _money(
+                          summary
+                              .supplierDebtToShopMinor,
+                          summary,
+                        ),
+                      ),
+
+                      _DetailRow(
+                        title:
+                            'ديون الموردين على المحل',
+                        value:
+                            _money(
+                          summary
+                              .supplierDebtOnShopMinor,
+                          summary,
+                        ),
+                        showDivider:
+                            false,
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(
+                  height: 12,
+                ),
+
+                _SurfaceCard(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment
+                            .stretch,
+                    children: [
                       const Text(
                         'تفاصيل الحساب',
                         style:
