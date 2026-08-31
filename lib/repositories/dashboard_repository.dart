@@ -4,6 +4,7 @@ import '../data/local/app_database.dart';
 import '../data/remote/dashboard_remote_data_source.dart';
 import '../models/accounting_transaction_model.dart';
 import '../models/home_financial_summary_model.dart';
+import '../models/party_model.dart';
 
 class DashboardLoadResult {
   final List<HomeFinancialSummaryModel>
@@ -32,18 +33,34 @@ class DashboardRepository {
       final server =
           await remote.getFinancialSummary();
 
-      // Add only local unsynced operations on top of
-      // authoritative server totals.
       final pending =
           await database
               .readPendingTransactions();
 
+      final hasMasterChanges =
+          await database.hasPendingMasterDataChanges();
+
+      // While there are unsynced local changes, use the local ledger as
+      // the source of truth so debts and totals react immediately offline.
+      if (pending.isNotEmpty || hasMasterChanges) {
+        final localTransactions =
+            await database.readAllTransactions();
+        final temporaryParties =
+            (await database.readParties())
+                .where((item) => item.id < 0)
+                .toList();
+
+        return DashboardLoadResult(
+          summaries: _fromTransactions(
+            localTransactions,
+            temporaryParties: temporaryParties,
+          ),
+          fromLocal: true,
+        );
+      }
+
       return DashboardLoadResult(
-        summaries:
-            _mergePending(
-          server,
-          pending,
-        ),
+        summaries: server,
         fromLocal: false,
       );
     } on DioException catch (e) {
@@ -55,10 +72,16 @@ class DashboardRepository {
           await database
               .readAllTransactions();
 
+      final temporaryParties =
+          (await database.readParties())
+              .where((item) => item.id < 0)
+              .toList();
+
       return DashboardLoadResult(
         summaries:
             _fromTransactions(
           transactions,
+          temporaryParties: temporaryParties,
         ),
         fromLocal: true,
       );
@@ -162,15 +185,60 @@ class DashboardRepository {
   List<HomeFinancialSummaryModel>
       _fromTransactions(
     List<AccountingTransactionModel>
-        transactions,
-  ) {
+        transactions, {
+    List<PartyModel> temporaryParties = const [],
+  }) {
     final map =
         <int, _MutableSummary>{};
+
+    final customerBalances =
+        <int, Map<int, int>>{};
+    final supplierBalances =
+        <int, Map<int, int>>{};
+
+    void addPartyBalance(
+      Map<int, Map<int, int>> target,
+      int currencyId,
+      int? partyId,
+      int delta,
+    ) {
+      if (partyId == null || delta == 0) return;
+      final byParty = target.putIfAbsent(
+        currencyId,
+        () => <int, int>{},
+      );
+      byParty[partyId] = (byParty[partyId] ?? 0) + delta;
+    }
+
+    for (final party in temporaryParties) {
+      for (final balance in party.openingBalances) {
+        map.putIfAbsent(
+          balance.currencyId,
+          () => _MutableSummary(
+            currencyId: balance.currencyId,
+            currencyCode: balance.currencyCode,
+            currencyNameAr: balance.currencyNameAr,
+            currencySymbol: balance.currencySymbol,
+            decimalPlaces: balance.currencyDecimalPlaces,
+          ),
+        );
+
+        addPartyBalance(
+          balance.balanceSide == 'receivable'
+              ? customerBalances
+              : supplierBalances,
+          balance.currencyId,
+          party.id,
+          balance.amountMinor,
+        );
+      }
+    }
 
     for (final item in transactions) {
       if (
         item.status == 'failed' ||
         item.status == 'reversed' ||
+        item.status == 'reversed_pending' ||
         item.type == 'reversal'
       ) {
         continue;
@@ -195,6 +263,13 @@ class DashboardRepository {
 
       switch (item.type) {
         case 'sale':
+          addPartyBalance(
+            customerBalances,
+            item.currencyId,
+            item.partyId,
+            item.amountMinor - item.paidNowMinor,
+          );
+
           summary.salesTotal +=
               item.amountMinor;
 
@@ -206,6 +281,13 @@ class DashboardRepository {
           break;
 
         case 'purchase':
+          addPartyBalance(
+            supplierBalances,
+            item.currencyId,
+            item.partyId,
+            item.amountMinor - item.paidNowMinor,
+          );
+
           summary.purchasesTotal +=
               item.amountMinor;
 
@@ -217,6 +299,13 @@ class DashboardRepository {
           break;
 
         case 'customer_collection':
+          addPartyBalance(
+            customerBalances,
+            item.currencyId,
+            item.partyId,
+            -item.amountMinor,
+          );
+
           summary.customerCollections +=
               item.amountMinor;
 
@@ -225,6 +314,13 @@ class DashboardRepository {
           break;
 
         case 'supplier_payment':
+          addPartyBalance(
+            supplierBalances,
+            item.currencyId,
+            item.partyId,
+            -item.amountMinor,
+          );
+
           summary.supplierPaid +=
               item.amountMinor;
 
@@ -233,6 +329,24 @@ class DashboardRepository {
 
           summary.outgoing +=
               item.amountMinor;
+          break;
+
+        case 'customer_opening_balance':
+          addPartyBalance(
+            customerBalances,
+            item.currencyId,
+            item.partyId,
+            item.amountMinor,
+          );
+          break;
+
+        case 'supplier_opening_balance':
+          addPartyBalance(
+            supplierBalances,
+            item.currencyId,
+            item.partyId,
+            item.amountMinor,
+          );
           break;
 
         case 'expense':
@@ -275,6 +389,24 @@ class DashboardRepository {
               item.amountMinor;
           break;
       }
+    }
+
+    for (final entry in map.entries) {
+      final summary = entry.value;
+      final customer = customerBalances[entry.key]?.values ?? const <int>[];
+      final supplier = supplierBalances[entry.key]?.values ?? const <int>[];
+
+      summary.customerDebtTotal = customer
+          .where((value) => value > 0)
+          .fold(0, (sum, value) => sum + value);
+
+      summary.supplierDebtOnShop = supplier
+          .where((value) => value > 0)
+          .fold(0, (sum, value) => sum + value);
+
+      summary.supplierDebtToShop = supplier
+          .where((value) => value < 0)
+          .fold(0, (sum, value) => sum + value.abs());
     }
 
     final result =
@@ -333,6 +465,10 @@ class _MutableSummary {
   int workerAdvances = 0;
   int workerAdvanceRecovery = 0;
 
+  int customerDebtTotal = 0;
+  int supplierDebtToShop = 0;
+  int supplierDebtOnShop = 0;
+
   _MutableSummary({
     required this.currencyId,
     required this.currencyCode,
@@ -375,6 +511,12 @@ class _MutableSummary {
           workerAdvances,
       workerAdvanceRecoveryMinor:
           workerAdvanceRecovery,
+      customerDebtTotalMinor:
+          customerDebtTotal,
+      supplierDebtToShopMinor:
+          supplierDebtToShop,
+      supplierDebtOnShopMinor:
+          supplierDebtOnShop,
     );
   }
 }

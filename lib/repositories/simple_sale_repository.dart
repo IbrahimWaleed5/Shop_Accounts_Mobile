@@ -44,6 +44,12 @@ class SimpleSaleRepository {
       payload: prepared,
     );
 
+    if (_hasTemporaryReference(prepared)) {
+      final pending = await database.pendingTransactionByUuid(operationUuid);
+      if (pending != null) return pending;
+      throw const SimpleSaleException('تعذر حفظ البيع محليًا.');
+    }
+
     try {
       final transaction =
           await remote.createSale(
@@ -107,6 +113,28 @@ class SimpleSaleRepository {
         _message(e),
       );
     }
+  }
+
+  bool _hasTemporaryReference(dynamic value) {
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        final current = entry.value;
+        if (const {
+          'party_id',
+          'financial_account_id',
+          'category_id',
+        }.contains(key) && current is num && current.toInt() < 0) {
+          return true;
+        }
+        if (_hasTemporaryReference(current)) return true;
+      }
+    } else if (value is List) {
+      for (final item in value) {
+        if (_hasTemporaryReference(item)) return true;
+      }
+    }
+    return false;
   }
 
   bool _networkFailure(

@@ -637,11 +637,13 @@ class AppDatabase extends _$AppDatabase {
     ReferenceDataModel data,
   ) async {
     await transaction(() async {
-      await delete(
-        localFinancialAccounts,
-      ).go();
+      await (delete(localFinancialAccounts)
+            ..where((table) => table.serverId.isBiggerThanValue(0)))
+          .go();
 
-      await delete(localCategories).go();
+      await (delete(localCategories)
+            ..where((table) => table.serverId.isBiggerThanValue(0)))
+          .go();
       await delete(localCurrencies).go();
 
       for (final currency in data.currencies) {
@@ -1728,8 +1730,10 @@ class AppDatabase extends _$AppDatabase {
     final row = await query.getSingleOrNull();
 
     if (row == null ||
-        row.operationType !=
-            'accounting_transaction' ||
+        !{
+          'accounting_transaction',
+          'transaction_correct',
+        }.contains(row.operationType) ||
         row.status == 'syncing') {
       return false;
     }
@@ -1747,6 +1751,10 @@ class AppDatabase extends _$AppDatabase {
     prepared['client_created_at'] ??=
         oldPayload['client_created_at'] ??
             row.createdAt.toIso8601String();
+
+    if (row.operationType == 'transaction_correct') {
+      prepared['transaction_id'] ??= oldPayload['transaction_id'];
+    }
 
     await (update(localSyncOperations)
           ..where(
@@ -1770,6 +1778,378 @@ class AppDatabase extends _$AppDatabase {
     );
 
     return true;
+  }
+
+  Future<bool> hasPendingMasterDataChanges() async {
+    final operations = await readSyncOperations(
+      includeFailed: true,
+      limit: 500,
+    );
+
+    const masterTypes = {
+      'party_create',
+      'party_update',
+      'party_status',
+      'worker_create',
+      'worker_update',
+      'worker_status',
+      'product_create',
+      'product_update',
+      'product_status',
+      'financial_account_create',
+      'financial_account_status',
+      'category_create',
+      'category_status',
+    };
+
+    return operations.any(
+      (item) => masterTypes.contains(item.operationType),
+    );
+  }
+
+  Future<int> nextTemporaryPartyId() async {
+    final items = await readParties();
+    return _nextTemporaryId(items.map((item) => item.id));
+  }
+
+  Future<int> nextTemporaryWorkerId() async {
+    final items = await readWorkers();
+    return _nextTemporaryId(items.map((item) => item.id));
+  }
+
+  Future<int> nextTemporaryProductId() async {
+    final items = await readProducts();
+    return _nextTemporaryId(items.map((item) => item.id));
+  }
+
+  Future<int> nextTemporaryFinancialAccountId() async {
+    final data = await readReferenceData();
+    return _nextTemporaryId(
+      data.financialAccounts.map((item) => item.id),
+    );
+  }
+
+  Future<int> nextTemporaryCategoryId() async {
+    final data = await readReferenceData();
+    return _nextTemporaryId(data.categories.map((item) => item.id));
+  }
+
+  int _nextTemporaryId(Iterable<int> ids) {
+    var minId = 0;
+    for (final id in ids) {
+      if (id < minId) minId = id;
+    }
+    return minId - 1;
+  }
+
+  Future<void> upsertFinancialAccount(
+    FinancialAccountModel account,
+  ) async {
+    await into(localFinancialAccounts).insertOnConflictUpdate(
+      LocalFinancialAccountsCompanion(
+        serverId: Value(account.id),
+        uuid: Value(account.uuid),
+        name: Value(account.name),
+        type: Value(account.type),
+        currencyServerId: Value(account.currencyId),
+        currencyCode: Value(account.currencyCode),
+        currencySymbol: Value(account.currencySymbol),
+        currencyDecimalPlaces: Value(account.currencyDecimalPlaces),
+        openingBalanceMinor: Value(account.openingBalanceMinor),
+        notes: Value(account.notes),
+        isActive: Value(account.isActive),
+        updatedAt: Value(account.updatedAt),
+      ),
+    );
+  }
+
+  Future<void> upsertCategory(
+    CategoryModel category,
+  ) async {
+    await into(localCategories).insertOnConflictUpdate(
+      LocalCategoriesCompanion(
+        serverId: Value(category.id),
+        uuid: Value(category.uuid),
+        name: Value(category.name),
+        type: Value(category.type),
+        notes: Value(category.notes),
+        isActive: Value(category.isActive),
+        updatedAt: Value(category.updatedAt),
+      ),
+    );
+  }
+
+  Future<bool> updateQueuedOperationPayload({
+    required String operationUuid,
+    required Map<String, dynamic> payload,
+  }) async {
+    final query = select(localSyncOperations)
+      ..where(
+        (table) => table.operationUuid.equals(operationUuid),
+      )
+      ..limit(1);
+
+    final row = await query.getSingleOrNull();
+    if (row == null || row.status == 'syncing') {
+      return false;
+    }
+
+    final prepared = Map<String, dynamic>.from(payload);
+    prepared['uuid'] ??= operationUuid;
+
+    await (update(localSyncOperations)
+          ..where(
+            (table) => table.operationUuid.equals(operationUuid),
+          ))
+        .write(
+      LocalSyncOperationsCompanion(
+        payloadJson: Value(jsonEncode(prepared)),
+        status: const Value('pending_sync'),
+        attempts: const Value(0),
+        lastError: const Value<String?>(null),
+        updatedAt: Value(DateTime.now()),
+      ),
+    );
+
+    return true;
+  }
+
+  Future<void> markTransactionReversalPending(
+    int transactionId,
+  ) async {
+    await (update(localAccountingTransactions)
+          ..where(
+            (table) => table.serverId.equals(transactionId),
+          ))
+        .write(
+      const LocalAccountingTransactionsCompanion(
+        status: Value('reversed_pending'),
+      ),
+    );
+  }
+
+  Future<void> restoreTransactionPosted(
+    int transactionId,
+  ) async {
+    await (update(localAccountingTransactions)
+          ..where(
+            (table) => table.serverId.equals(transactionId),
+          ))
+        .write(
+      const LocalAccountingTransactionsCompanion(
+        status: Value('posted'),
+      ),
+    );
+  }
+
+  Future<void> markTransactionReversed(
+    int transactionId,
+  ) async {
+    await (update(localAccountingTransactions)
+          ..where(
+            (table) => table.serverId.equals(transactionId),
+          ))
+        .write(
+      const LocalAccountingTransactionsCompanion(
+        status: Value('reversed'),
+      ),
+    );
+  }
+
+  Future<void> remapQueuedReferences({
+    required String entityType,
+    required int oldId,
+    required int newId,
+  }) async {
+    final rows = await select(localSyncOperations).get();
+
+    final keys = switch (entityType) {
+      'party' => const {'party_id'},
+      'worker' => const {'worker_id'},
+      'product' => const {'product_id'},
+      'financial_account' => const {
+          'financial_account_id',
+          'target_financial_account_id',
+        },
+      'category' => const {'category_id'},
+      _ => const <String>{},
+    };
+
+    if (keys.isEmpty) return;
+
+    for (final row in rows) {
+      final payload = Map<String, dynamic>.from(
+        jsonDecode(row.payloadJson) as Map,
+      );
+
+      final changed = _remapValue(
+        payload,
+        keys,
+        oldId,
+        newId,
+      );
+
+      if (changed) {
+        await (update(localSyncOperations)
+              ..where((table) => table.id.equals(row.id)))
+            .write(
+          LocalSyncOperationsCompanion(
+            payloadJson: Value(jsonEncode(payload)),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+      }
+    }
+  }
+
+  bool _remapValue(
+    dynamic value,
+    Set<String> keys,
+    int oldId,
+    int newId,
+  ) {
+    var changed = false;
+
+    if (value is Map<String, dynamic>) {
+      for (final key in value.keys.toList()) {
+        final current = value[key];
+        if (keys.contains(key) && current is num && current.toInt() == oldId) {
+          value[key] = newId;
+          changed = true;
+        } else if (_remapValue(current, keys, oldId, newId)) {
+          changed = true;
+        }
+      }
+    } else if (value is List) {
+      for (final item in value) {
+        if (_remapValue(item, keys, oldId, newId)) {
+          changed = true;
+        }
+      }
+    }
+
+    return changed;
+  }
+
+  Future<void> reapplyPendingInventoryForProduct(
+    int productId,
+  ) async {
+    final product = await (select(localProducts)
+          ..where((table) => table.serverId.equals(productId))
+          ..limit(1))
+        .getSingleOrNull();
+
+    if (product == null || product.productType != 'inventory') return;
+
+    final rows = await (select(localSyncOperations)
+          ..where(
+            (table) =>
+                table.status.isIn(['pending_sync', 'syncing', 'failed']) &
+                table.operationType.isIn(['purchase', 'product_sale']),
+          ))
+        .get();
+
+    var delta = 0;
+    for (final row in rows) {
+      if (row.status == 'failed') continue;
+      final payload = Map<String, dynamic>.from(
+        jsonDecode(row.payloadJson) as Map,
+      );
+      final items = payload['items'] as List<dynamic>? ?? const [];
+      final sign = row.operationType == 'purchase' ? 1 : -1;
+
+      for (final raw in items) {
+        final item = Map<String, dynamic>.from(raw as Map);
+        final id = (item['product_id'] as num?)?.toInt();
+        if (id != productId) continue;
+        final quantity = (item['quantity_milli'] as num?)?.toInt() ?? 0;
+        delta += sign * quantity;
+      }
+    }
+
+    if (delta != 0) {
+      await (update(localProducts)
+            ..where((table) => table.serverId.equals(productId)))
+          .write(
+        LocalProductsCompanion(
+          stockQuantityMilli: Value(product.stockQuantityMilli + delta),
+        ),
+      );
+    }
+  }
+
+  Future<void> deleteTemporaryEntity({
+    required String entityType,
+    required int tempId,
+  }) async {
+    switch (entityType) {
+      case 'party':
+        await (delete(localPartyOpeningBalances)
+              ..where((table) => table.partyServerId.equals(tempId)))
+            .go();
+        await (delete(localParties)
+              ..where((table) => table.serverId.equals(tempId)))
+            .go();
+        break;
+      case 'worker':
+        await (delete(localWorkerOpeningBalances)
+              ..where((table) => table.workerServerId.equals(tempId)))
+            .go();
+        await (delete(localWorkers)
+              ..where((table) => table.serverId.equals(tempId)))
+            .go();
+        break;
+      case 'product':
+        await (delete(localProducts)
+              ..where((table) => table.serverId.equals(tempId)))
+            .go();
+        break;
+      case 'financial_account':
+        await (delete(localFinancialAccounts)
+              ..where((table) => table.serverId.equals(tempId)))
+            .go();
+        break;
+      case 'category':
+        await (delete(localCategories)
+              ..where((table) => table.serverId.equals(tempId)))
+            .go();
+        break;
+    }
+  }
+
+  Future<void> applyLocalInventoryDelta({
+    required String operationType,
+    required Map<String, dynamic> payload,
+    int direction = 1,
+  }) async {
+    if (operationType != 'purchase' && operationType != 'product_sale') {
+      return;
+    }
+
+    final sign = operationType == 'purchase' ? 1 : -1;
+    final items = payload['items'] as List<dynamic>? ?? const [];
+
+    for (final raw in items) {
+      final item = Map<String, dynamic>.from(raw as Map);
+      final productId = (item['product_id'] as num?)?.toInt();
+      final quantity = (item['quantity_milli'] as num?)?.toInt() ?? 0;
+      if (productId == null || quantity == 0) continue;
+
+      final product = await (select(localProducts)
+            ..where((table) => table.serverId.equals(productId))
+            ..limit(1))
+          .getSingleOrNull();
+      if (product == null || product.productType != 'inventory') continue;
+
+      final next = product.stockQuantityMilli + (sign * direction * quantity);
+      await (update(localProducts)
+            ..where((table) => table.serverId.equals(productId)))
+          .write(
+        LocalProductsCompanion(
+          stockQuantityMilli: Value(next),
+        ),
+      );
+    }
   }
 
   Future<void> removeSyncOperation(
@@ -1803,7 +2183,15 @@ class AppDatabase extends _$AppDatabase {
     final row =
         await query.getSingleOrNull();
 
-    if (row == null) {
+    if (row == null ||
+        !{
+          'accounting_transaction',
+          'simple_sale',
+          'purchase',
+          'product_sale',
+          'transaction_correct',
+          'transaction_reverse',
+        }.contains(row.operationType)) {
       return null;
     }
 
@@ -1822,6 +2210,14 @@ class AppDatabase extends _$AppDatabase {
             'pending_sync',
             'syncing',
             'failed',
+          ]) &
+              table.operationType.isIn([
+            'accounting_transaction',
+            'simple_sale',
+            'purchase',
+            'product_sale',
+            'transaction_correct',
+            'transaction_reverse',
           ]),
         )
         ..orderBy([
@@ -1892,9 +2288,12 @@ class AppDatabase extends _$AppDatabase {
         : operationType ==
                 'purchase'
             ? 'purchase'
-            : payload['type']
-                    ?.toString() ??
-                'unknown';
+            : operationType ==
+                    'transaction_reverse'
+                ? 'reversal'
+                : payload['type']
+                        ?.toString() ??
+                    'unknown';
 
     final currencyId =
         (payload['currency_id']
@@ -2118,7 +2517,9 @@ class AppDatabase extends _$AppDatabase {
 
     if (
       operationType ==
-          'accounting_transaction'
+              'accounting_transaction' ||
+          operationType ==
+              'transaction_correct'
     ) {
       final creditOnly = {
         'worker_salary_accrual',
@@ -2206,9 +2607,17 @@ class AppDatabase extends _$AppDatabase {
           targetFinancialAccountId,
       targetFinancialAccountName:
           targetFinancialAccountName,
+      reversalOfId:
+          (operationType == 'transaction_reverse' ||
+                  operationType == 'transaction_correct')
+              ? (payload['transaction_id'] as num?)
+                  ?.toInt()
+              : null,
       description:
-          payload['description']
-              ?.toString(),
+          operationType == 'transaction_reverse'
+              ? 'قيد عكسي محلي بانتظار المزامنة'
+              : payload['description']
+                  ?.toString(),
       notes:
           row.status == 'failed'
               ? row.lastError

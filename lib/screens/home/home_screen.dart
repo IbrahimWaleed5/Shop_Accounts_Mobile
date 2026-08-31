@@ -1109,7 +1109,8 @@ class _HomeScreenState
             ),
 
             if (
-              user.isManager
+              user.isManager ||
+              user.isAccountant
             ) ...[
               const SizedBox(
                 height: 10,
@@ -1129,7 +1130,11 @@ class _HomeScreenState
                       true,
                 ),
               ),
+            ],
 
+            if (
+              user.isManager
+            ) ...[
               const SizedBox(
                 height: 10,
               ),

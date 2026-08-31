@@ -18,6 +18,10 @@ class LedgerRepository {
       getPartyLedger(
     int partyId,
   ) async {
+    if (partyId < 0) {
+      return _localPartyLedger(partyId);
+    }
+
     try {
       return await remote
           .getPartyLedger(
@@ -40,6 +44,10 @@ class LedgerRepository {
       getWorkerLedger(
     int workerId,
   ) async {
+    if (workerId < 0) {
+      return _localWorkerLedger(workerId);
+    }
+
     try {
       return await remote
           .getWorkerLedger(
@@ -73,6 +81,35 @@ class LedgerRepository {
         <int, _BalanceAccumulator>{};
 
     String name = 'الحساب';
+
+    if (partyId < 0) {
+      for (final party in await database.readParties()) {
+        if (party.id != partyId) continue;
+
+        name = party.name;
+
+        for (final balance in party.openingBalances) {
+          final target =
+              balance.balanceSide == 'receivable'
+                  ? receivable
+                  : payable;
+
+          final accumulator = target.putIfAbsent(
+            balance.currencyId,
+            () => _BalanceAccumulator(
+              currencyId: balance.currencyId,
+              code: balance.currencyCode,
+              symbol: balance.currencySymbol,
+              decimalPlaces: balance.currencyDecimalPlaces,
+            ),
+          );
+
+          accumulator.balance += balance.amountMinor;
+        }
+
+        break;
+      }
+    }
 
     for (final item in transactions) {
       if (
@@ -164,6 +201,35 @@ class LedgerRepository {
 
     String name = 'العامل';
 
+    if (workerId < 0) {
+      for (final worker in await database.readWorkers()) {
+        if (worker.id != workerId) continue;
+
+        name = worker.name;
+
+        for (final balance in worker.openingBalances) {
+          final target =
+              balance.balanceSide == 'advance'
+                  ? advances
+                  : payable;
+
+          final accumulator = target.putIfAbsent(
+            balance.currencyId,
+            () => _BalanceAccumulator(
+              currencyId: balance.currencyId,
+              code: balance.currencyCode,
+              symbol: balance.currencySymbol,
+              decimalPlaces: balance.currencyDecimalPlaces,
+            ),
+          );
+
+          accumulator.balance += balance.amountMinor;
+        }
+
+        break;
+      }
+    }
+
     for (final item in transactions) {
       if (
         item.workerId != workerId ||
@@ -228,6 +294,8 @@ class LedgerRepository {
   ) {
     return item.status !=
             'reversed' &&
+        item.status !=
+            'reversed_pending' &&
         item.status !=
             'failed' &&
         item.type !=

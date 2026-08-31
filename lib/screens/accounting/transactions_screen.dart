@@ -259,6 +259,9 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
     if (item.status == 'reversed') {
       return 'معكوسة';
     }
+    if (item.status == 'reversed_pending') {
+      return 'تم تسجيل عكس/تصحيح محليًا - بانتظار المزامنة';
+    }
     return '';
   }
 
@@ -333,7 +336,8 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
                     item.type != 'reversal';
                 final canShowEdit = canManageTransaction &&
                     item.type != 'reversal' &&
-                    item.status != 'reversed';
+                    item.status != 'reversed' &&
+                    item.status != 'reversed_pending';
 
                 return Card(
                   child: Padding(

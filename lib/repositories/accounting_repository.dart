@@ -73,6 +73,22 @@ class AccountingRepository {
       loadPartyTransactions(
     int partyId,
   ) async {
+    if (partyId < 0) {
+      final local =
+          (await database
+                  .readAllTransactions())
+              .where(
+                (item) =>
+                    item.partyId == partyId,
+              )
+              .toList();
+
+      return AccountingLoadResult(
+        transactions: local,
+        fromLocal: true,
+      );
+    }
+
     try {
       final remoteData =
           await remote.getTransactions(
@@ -161,6 +177,12 @@ class AccountingRepository {
       payload: prepared,
     );
 
+    if (_hasTemporaryReference(prepared)) {
+      final pending = await database.pendingTransactionByUuid(operationUuid);
+      if (pending != null) return pending;
+      throw const AccountingException('تعذر حفظ الحركة المحلية.');
+    }
+
     try {
       final transaction =
           await remote.createTransaction(
@@ -237,6 +259,13 @@ class AccountingRepository {
         transaction.status == 'failed';
 
     if (localOnly) {
+      if (transaction.status == 'failed' &&
+          transaction.reversalOfId != null) {
+        await database.markTransactionReversalPending(
+          transaction.reversalOfId!,
+        );
+      }
+
       final updated =
           await database
               .updatePendingTransactionPayload(
@@ -245,6 +274,11 @@ class AccountingRepository {
       );
 
       if (!updated) {
+        if (transaction.reversalOfId != null) {
+          await database.restoreTransactionPosted(
+            transaction.reversalOfId!,
+          );
+        }
         throw const AccountingException(
           'تعذر تعديل الحركة المحلية. إذا كانت المزامنة بدأت، انتظر انتهاءها ثم حاول مجددًا.',
         );
@@ -271,28 +305,31 @@ class AccountingRepository {
       );
     }
 
-    try {
-      final corrected =
-          await remote.correctTransaction(
-        transactionId: transaction.id,
-        payload: payload,
-      );
+    final operationUuid = UuidUtils.v4();
+    final prepared = Map<String, dynamic>.from(payload);
+    prepared['transaction_id'] = transaction.id;
+    prepared['uuid'] = operationUuid;
+    prepared['client_created_at'] ??= DateTime.now().toIso8601String();
 
-      final remoteData =
-          await remote.getTransactions();
+    // Offline-first correction: the original is hidden from local totals
+    // and the corrected replacement is shown as pending until sync.
+    await database.markTransactionReversalPending(transaction.id);
+    await database.enqueueSyncOperation(
+      operationUuid: operationUuid,
+      operationType: 'transaction_correct',
+      payload: prepared,
+    );
 
-      await database.upsertTransactions(
-        remoteData,
-      );
-
-      return corrected;
-    } on DioException catch (e) {
-      throw AccountingException(
-        _networkFailure(e)
-            ? 'تصحيح الحركة المرحلة يحتاج اتصالًا بالخادم.'
-            : _message(e),
+    final pending = await database.pendingTransactionByUuid(operationUuid);
+    if (pending == null) {
+      await database.restoreTransactionPosted(transaction.id);
+      await database.removeSyncOperation(operationUuid);
+      throw const AccountingException(
+        'تعذر حفظ التصحيح محليًا.',
       );
     }
+
+    return pending;
   }
 
   Future<AccountingTransactionModel>
@@ -300,30 +337,85 @@ class AccountingRepository {
     required int transactionId,
     String? reason,
   }) async {
-    // Reversal remains online-only because it must validate
-    // the authoritative server transaction and inventory state.
-    try {
-      final transaction =
-          await remote.reverseTransaction(
-        transactionId: transactionId,
-        reason: reason,
-      );
+    final transactions = await database.readTransactions();
+    AccountingTransactionModel? original;
+    for (final item in transactions) {
+      if (item.id == transactionId) {
+        original = item;
+        break;
+      }
+    }
 
-      final remoteData =
-          await remote.getTransactions();
-
-      await database.upsertTransactions(
-        remoteData,
-      );
-
-      return transaction;
-    } on DioException catch (e) {
-      throw AccountingException(
-        _networkFailure(e)
-            ? 'عكس الحركة يحتاج اتصالًا بالخادم للتحقق من حالتها الحالية.'
-            : _message(e),
+    if (original == null) {
+      throw const AccountingException(
+        'تعذر العثور على الحركة محليًا. حدّث السجل ثم حاول مرة أخرى.',
       );
     }
+
+    if (original.status != 'posted') {
+      throw const AccountingException(
+        'لا يمكن عكس الحركة في حالتها الحالية.',
+      );
+    }
+
+    final operationUuid = UuidUtils.v4();
+    final payload = <String, dynamic>{
+      'transaction_id': transactionId,
+      'reason': reason,
+      'currency_id': original.currencyId,
+      'amount_minor': original.amountMinor,
+      'occurred_at': DateTime.now().toIso8601String(),
+      'party_id': original.partyId,
+      'worker_id': original.workerId,
+      'category_id': original.categoryId,
+      'financial_account_id': original.financialAccountId,
+      'target_financial_account_id': original.targetFinancialAccountId,
+      'uuid': operationUuid,
+      'client_created_at': DateTime.now().toIso8601String(),
+    };
+
+    await database.markTransactionReversalPending(transactionId);
+    await database.enqueueSyncOperation(
+      operationUuid: operationUuid,
+      operationType: 'transaction_reverse',
+      payload: payload,
+    );
+
+    final pending = await database.pendingTransactionByUuid(operationUuid);
+    if (pending == null) {
+      await database.restoreTransactionPosted(transactionId);
+      await database.removeSyncOperation(operationUuid);
+      throw const AccountingException(
+        'تعذر حفظ القيد العكسي محليًا.',
+      );
+    }
+
+    return pending;
+  }
+
+  bool _hasTemporaryReference(dynamic value) {
+    if (value is Map) {
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        final current = entry.value;
+        if (const {
+          'party_id',
+          'worker_id',
+          'category_id',
+          'financial_account_id',
+          'target_financial_account_id',
+          'product_id',
+        }.contains(key) && current is num && current.toInt() < 0) {
+          return true;
+        }
+        if (_hasTemporaryReference(current)) return true;
+      }
+    } else if (value is List) {
+      for (final item in value) {
+        if (_hasTemporaryReference(item)) return true;
+      }
+    }
+    return false;
   }
 
   bool _networkFailure(

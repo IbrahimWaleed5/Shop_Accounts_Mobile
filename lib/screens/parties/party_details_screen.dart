@@ -221,7 +221,11 @@ class _PartyDetailsScreenState extends State<PartyDetailsScreen> {
     List<AccountingTransactionModel> source,
   ) {
     final items = source
-        .where((item) => item.partyId == party.id)
+        .where(
+          (item) =>
+              item.partyId == party.id &&
+              item.status != 'reversed_pending',
+        )
         .toList()
       ..sort((a, b) {
         final date = a.occurredAt.compareTo(b.occurredAt);
@@ -264,6 +268,8 @@ class _PartyDetailsScreenState extends State<PartyDetailsScreen> {
         return 'تحتاج إعادة مزامنة';
       case 'reversed':
         return 'تم عكسها';
+      case 'reversed_pending':
+        return 'تم تسجيل عكس/تصحيح محليًا';
       default:
         return 'مرحلة';
     }
